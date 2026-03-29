@@ -304,6 +304,8 @@ Notes:
 
 ### 6' (New) One-Command A800-40G Full SFT
 
+Recommended environment: the bootstrap now targets preinstalled servers running `Anaconda + Python 3.12 + torch 2.5 + torchvision 0.20.0 + torchaudio 2.5.0 + CUDA 12.4`. Activate the conda env first.
+
 ```bash
 KAGGLE_API_TOKEN='your_kaggle_key' bash -c 'curl -fsSL https://raw.githubusercontent.com/black-fruit/tuanzi/main/scripts/bootstrap_a800_full_sft.sh | bash -s -- --workdir ~/tuanzi-a800 --kaggle-owner black-fruit'
 ```
@@ -314,7 +316,7 @@ This command will automatically:
 - download `sft_t2t_mini.jsonl` and `pretrain_768.pth`
 - read the sample docs under `./docs` and build `doc_sft.jsonl`
 - run a fast document-memory stage first, then a slower consolidation stage with document replay
-- merge datasets, build offline token cache, and launch the A800-optimized `train_full_sft.py`
+- merge datasets, build offline token cache, and launch the `1h` profile of `train_full_sft.py`: `max_seq_len=512`, `batch_size=160`, single main epoch
 - export a Transformers model
 - upload the result to Kaggle Models
 

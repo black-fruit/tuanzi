@@ -305,6 +305,8 @@ cd scripts && python serve_openai_api.py --load_from ../minimind-3 --doc_path ..
 
 ### 6'（新增）A800-40G 一键 Full SFT
 
+推荐环境：已针对 `Anaconda + Python 3.12 + torch 2.5 + torchvision 0.20.0 + torchaudio 2.5.0 + CUDA 12.4` 的预装服务器场景做了适配；请先激活你的 conda 环境再执行。
+
 ```bash
 KAGGLE_API_TOKEN='你的Kaggle密钥' bash -c 'curl -fsSL https://raw.githubusercontent.com/black-fruit/tuanzi/main/scripts/bootstrap_a800_full_sft.sh | bash -s -- --workdir ~/tuanzi-a800 --kaggle-owner black-fruit'
 ```
@@ -315,7 +317,7 @@ KAGGLE_API_TOKEN='你的Kaggle密钥' bash -c 'curl -fsSL https://raw.githubuser
 - 下载 `sft_t2t_mini.jsonl` 与 `pretrain_768.pth`
 - 读取 `./docs` 下的文档示例，生成 `doc_sft.jsonl`
 - 先做“文档快记忆”，再做“通用数据 + 文档回放”的慢整合训练，更接近海马体 / 新皮层互补学习
-- 合并数据、构建离线 token cache、用 A800-40G 优化参数跑 `train_full_sft.py`
+- 合并数据、构建离线 token cache，并用 `1h` 配置跑 `train_full_sft.py`：默认 `max_seq_len=512`、`batch_size=160`、主训练 `1 epoch`
 - 导出 Transformers 模型
 - 上传到 Kaggle Models
 

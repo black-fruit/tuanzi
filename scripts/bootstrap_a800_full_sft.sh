@@ -61,6 +61,42 @@ fi
 cd "$REPO_DIR"
 
 "$PYTHON_BIN" -m pip install --upgrade pip
+"$PYTHON_BIN" - <<'PY'
+import importlib
+import os
+import sys
+
+def safe_version(name):
+    try:
+        module = importlib.import_module(name)
+        return getattr(module, "__version__", "unknown")
+    except Exception:
+        return "not-installed"
+
+py = sys.version_info
+if py < (3, 10):
+    raise SystemExit(f"Python >= 3.10 is required, got {sys.version.split()[0]}")
+
+torch_version = safe_version("torch")
+torchvision_version = safe_version("torchvision")
+torchaudio_version = safe_version("torchaudio")
+cuda_version = "unknown"
+if torch_version != "not-installed":
+    import torch
+    cuda_version = getattr(torch.version, "cuda", None) or "cpu"
+
+conda_env = os.environ.get("CONDA_DEFAULT_ENV", "")
+conda_prefix = os.environ.get("CONDA_PREFIX", "")
+prefix = f"{conda_env} ({conda_prefix})" if conda_env or conda_prefix else "none"
+
+print(f"[ENV] python={sys.version.split()[0]} conda={prefix}")
+print(f"[ENV] torch={torch_version} torchvision={torchvision_version} torchaudio={torchaudio_version} cuda={cuda_version}")
+if torch_version != "not-installed" and not torch_version.startswith("2.5"):
+    print(f"[WARN] Expected preinstalled torch 2.5.x, got {torch_version}")
+if cuda_version not in {"unknown", "cpu"} and not str(cuda_version).startswith("12.4"):
+    print(f"[WARN] Expected CUDA 12.4 runtime, got {cuda_version}")
+PY
+
 if [[ "$SKIP_TORCH_INSTALL" == "1" ]]; then
   if ! "$PYTHON_BIN" -c "import torch; print(torch.__version__)" >/dev/null 2>&1; then
     echo "torch is not available in the current environment. This bootstrap skips torch installation by default." >&2
@@ -95,6 +131,7 @@ if [[ -n "$KAGGLE_OWNER" && -z "${KAGGLE_USERNAME:-}" ]]; then
 fi
 
 "$PYTHON_BIN" scripts/a800_full_sft_pipeline.py \
+  --time_profile 1h \
   --upload_kaggle "$UPLOAD_KAGGLE" \
   --kaggle_owner "$KAGGLE_OWNER" \
   --kaggle_model_slug "$KAGGLE_MODEL_SLUG"

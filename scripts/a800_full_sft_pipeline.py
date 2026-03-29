@@ -86,6 +86,8 @@ def run_full_sft(
     cache_data,
     cache_path,
     use_compile,
+    log_interval=50,
+    save_interval=10**9,
     intermediate_size=None,
 ):
     train_cmd = [
@@ -133,6 +135,10 @@ def run_full_sft(
         str(cache_path),
         "--use_compile",
         str(use_compile),
+        "--log_interval",
+        str(log_interval),
+        "--save_interval",
+        str(save_interval),
     ]
     if intermediate_size:
         train_cmd.extend(["--intermediate_size", str(intermediate_size)])
@@ -149,19 +155,20 @@ def main():
     parser.add_argument("--num_key_value_heads", default=4, type=int)
     parser.add_argument("--intermediate_size", default=None, type=int)
     parser.add_argument("--max_position_embeddings", default=32768, type=int)
-    parser.add_argument("--max_seq_len", default=768, type=int)
-    parser.add_argument("--batch_size", default=96, type=int, help="A800-40G 默认 batch size")
+    parser.add_argument("--max_seq_len", default=512, type=int)
+    parser.add_argument("--batch_size", default=160, type=int, help="A800-40G 1小时模式默认 batch size")
     parser.add_argument("--accumulation_steps", default=1, type=int)
-    parser.add_argument("--epochs", default=2, type=int)
-    parser.add_argument("--learning_rate", default=1e-5, type=float)
-    parser.add_argument("--save_weight", default="full_sft_a800", type=str)
+    parser.add_argument("--epochs", default=1, type=int)
+    parser.add_argument("--learning_rate", default=1.5e-5, type=float)
+    parser.add_argument("--save_weight", default="full_sft_a800_1h", type=str)
     parser.add_argument("--bio_mode", default=1, choices=[0, 1], type=int, help="是否启用仿生双阶段训练")
     parser.add_argument("--doc_focus_epochs", default=1, type=int, help="文档快记忆阶段轮数")
-    parser.add_argument("--doc_focus_learning_rate", default=2e-5, type=float, help="文档快记忆阶段学习率")
-    parser.add_argument("--doc_replay_factor", default=3, type=int, help="慢整合阶段文档回放倍数")
+    parser.add_argument("--doc_focus_learning_rate", default=3e-5, type=float, help="文档快记忆阶段学习率")
+    parser.add_argument("--doc_replay_factor", default=2, type=int, help="慢整合阶段文档回放倍数")
     parser.add_argument("--cache_data", default=1, choices=[0, 1], type=int)
     parser.add_argument("--use_compile", default=1, choices=[0, 1], type=int)
     parser.add_argument("--dtype", default="bfloat16", choices=["bfloat16", "float16"], type=str)
+    parser.add_argument("--time_profile", default="1h", choices=["1h", "balanced"], type=str, help="训练时长目标配置")
     parser.add_argument("--upload_kaggle", default=1, choices=[0, 1], type=int)
     parser.add_argument("--kaggle_owner", default="black-fruit", type=str, help="Kaggle owner slug，可覆盖")
     parser.add_argument("--kaggle_model_slug", default="tuanzi-a800-full-sft", type=str)
@@ -172,6 +179,8 @@ def main():
     print(f"[GPU] {gpu_name} | {gpu_memory}")
     if "A800" not in gpu_name.upper():
         print("[WARN] Current GPU is not A800-40G; pipeline will still run with the same defaults.")
+    if args.time_profile == "1h":
+        print("[PROFILE] 1h profile enabled: short sequence, single main epoch, larger batch, reduced replay.")
 
     dataset_dir = REPO_ROOT / "dataset"
     out_dir = REPO_ROOT / "out"
@@ -232,6 +241,7 @@ def main():
             cache_data=args.cache_data,
             cache_path=dataset_dir / f"{doc_sft_path.stem}.bio.cache.pt",
             use_compile=args.use_compile,
+            log_interval=20,
             intermediate_size=args.intermediate_size,
         )
         base_weight = doc_focus_weight
@@ -255,6 +265,7 @@ def main():
         cache_data=args.cache_data,
         cache_path=dataset_dir / f"{merged_sft.stem}.cache.pt",
         use_compile=args.use_compile,
+        log_interval=50,
         intermediate_size=args.intermediate_size,
     )
 
