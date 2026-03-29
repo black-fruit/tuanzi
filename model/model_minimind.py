@@ -21,6 +21,10 @@ class MiniMindConfig(PretrainedConfig):
         self.flash_attn = kwargs.get("flash_attn", True)
         self.num_attention_heads = kwargs.get("num_attention_heads", 8)
         self.num_key_value_heads = kwargs.get("num_key_value_heads", 4)
+        if self.hidden_size % self.num_attention_heads != 0 and "head_dim" not in kwargs:
+            raise ValueError("hidden_size must be divisible by num_attention_heads unless head_dim is explicitly provided")
+        if self.num_attention_heads % self.num_key_value_heads != 0:
+            raise ValueError("num_attention_heads must be divisible by num_key_value_heads")
         self.head_dim = kwargs.get("head_dim", self.hidden_size // self.num_attention_heads)
         self.hidden_act = kwargs.get("hidden_act", 'silu')
         self.intermediate_size = kwargs.get("intermediate_size", math.ceil(hidden_size * math.pi / 64) * 64)

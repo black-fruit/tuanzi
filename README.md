@@ -22,7 +22,8 @@
 </div>
 
 <div align="center">
-  <h3>"大道至简"</h3>
+  <h3>团子</h3>
+  <p>Biomimetic Brain Interface on top of MiniMind</p>
 </div>
 
 <div align="center">
@@ -31,6 +32,8 @@
 
 </div>
 
+* 本项目现对外改名为 **团子**；底层结构、权重目录与核心类名仍保持 `MiniMind` 兼容，避免破坏已有训练与推理流程。
+* 团子当前完成了一次仿生化改造：`scripts/web_demo.py` 以头皮、脑膜、边缘系统、皮层与脑机接口权衡为灵感，重做了 WebUI 的视觉与交互结构。
 * 此开源项目旨在完全从 0 开始，仅用 3 块钱成本与 2 小时训练时间，即可训练出规模约为 64M 的超小语言模型 MiniMind。
 * MiniMind 系列极其轻量，主线最小版本体积约为 GPT-3 的 $\frac{1}{2700}$，力求让普通个人 GPU 也能快速完成训练与复现。
 * 项目同时开源了大模型的极简结构与完整训练链路，覆盖 MoE、数据清洗、预训练（Pretrain）、监督微调（SFT）、LoRA、RLHF（DPO）、RLAIF（PPO / GRPO / CISPO）、Tool Use、Agentic RL、自适应思考与模型蒸馏等全过程代码。
@@ -40,6 +43,13 @@
 * 希望此项目能为更多人提供一个可复现、可理解、可扩展的起点，一起感受创造的乐趣，并推动更广泛 AI 社区的进步。
 
 > 注：本项目基于 Apache 2.0 协议开源，完全免费；“2小时” 基于 NVIDIA 3090 硬件设备（单卡）预估，“3块钱” 指 GPU 服务器租用成本，具体规格详情见下文。
+
+#### 🧠 仿生改造说明
+
+- 大脑并不是一个干净光滑的球体，而是被头皮、颅骨、硬脑膜、蛛网膜、软脑膜层层包裹；新的 WebUI 用这套“从外到里”的剖面关系组织首页内容。
+- 参考文本中的核心观点之一是：真正的大脑又软、又丑、又复杂。团子把这种质感转成了偏有机、血肉感的界面，而不是常规的扁平 AI 面板。
+- 脑机接口真正面对的是规模、解析度、侵入性的三难权衡，所以这次改造不只换皮，也顺手把 WebUI 里的天气、汇率、翻译等假工具实现改成了实时请求。
+- 这次改名主要针对对外呈现层；仓库里的 `MiniMind` 命名仍保留在模型代码和部分文档中，以保持权重、配置与第三方生态兼容。
 
 ---
 
@@ -256,11 +266,11 @@ python eval_llm.py --load_from ./minimind-3
 python eval_llm.py --load_from ./model --weight full_sft
 ```
 
-### 3'（可选）WebUI
+### 3'（可选）团子 WebUI
 
 ```bash
 # 可能需要`python>=3.10`，安装 `pip install streamlit`
-# ⚠️ 须先将 transformers 格式模型文件夹复制到 ./scripts/ 目录下（例如：cp -r minimind-3 ./scripts/minimind-3），web_demo 脚本会自动扫描该目录下包含权重文件的子文件夹，如不存在则报错
+# ⚠️ 须先将 transformers 格式模型文件夹复制到 ./scripts/ 目录下（例如：cp -r minimind-3 ./scripts/minimind-3），团子 WebUI 会自动扫描该目录下包含权重文件的子文件夹，如不存在则报错
 cd scripts && streamlit run web_demo.py
 ```
 
@@ -272,6 +282,48 @@ ollama run jingyaogong/minimind-3
 # vllm
 vllm serve /path/to/model --served-model-name "minimind"
 ```
+
+### 5'（新增）文档学习与本地知识建模
+
+```bash
+# 1. 把你的本地文档转成可训练数据（支持 txt/md/json/code/docx 等）
+python scripts/build_doc_dataset.py --input_path ./docs
+
+# 2. 用生成的语料继续预训练 / SFT
+python trainer/train_pretrain.py --data_path ../dataset/doc_pretrain.jsonl
+python trainer/train_full_sft.py --data_path ../dataset/doc_sft.jsonl
+
+# 3. 不训练也能先启用文档增强问答
+python eval_llm.py --load_from ./minimind-3 --doc_path ./docs
+cd scripts && python serve_openai_api.py --load_from ../minimind-3 --doc_path ../docs
+```
+
+说明：
+- `scripts/build_doc_dataset.py` 会把文档切块，生成 `doc_pretrain.jsonl` 和 `doc_sft.jsonl`
+- `eval_llm.py` / `serve_openai_api.py` 在开启 `--doc_path` 后，会先检索本地文档证据，再把证据注入提示词
+- 新的训练脚本参数已支持更细粒度的容量扩展：`num_attention_heads`、`num_key_value_heads`、`intermediate_size`、`max_position_embeddings`
+
+### 6'（新增）A800-40G 一键 Full SFT
+
+```bash
+KAGGLE_API_TOKEN='你的Kaggle密钥' bash -c 'curl -fsSL https://raw.githubusercontent.com/black-fruit/tuanzi/main/scripts/bootstrap_a800_full_sft.sh | bash -s -- --workdir ~/tuanzi-a800 --kaggle-owner black-fruit'
+```
+
+这条命令会自动完成：
+- 克隆仓库
+- 安装依赖（默认跳过预装的 `torch / torchvision / torchaudio`）
+- 下载 `sft_t2t_mini.jsonl` 与 `pretrain_768.pth`
+- 读取 `./docs` 下的文档示例，生成 `doc_sft.jsonl`
+- 先做“文档快记忆”，再做“通用数据 + 文档回放”的慢整合训练，更接近海马体 / 新皮层互补学习
+- 合并数据、构建离线 token cache、用 A800-40G 优化参数跑 `train_full_sft.py`
+- 导出 Transformers 模型
+- 上传到 Kaggle Models
+
+相关脚本：
+- 一键入口：[scripts/bootstrap_a800_full_sft.sh](./scripts/bootstrap_a800_full_sft.sh)
+- 训练流水线：[scripts/a800_full_sft_pipeline.py](./scripts/a800_full_sft_pipeline.py)
+- 文档缓存构建：[scripts/build_sft_cache.py](./scripts/build_sft_cache.py)
+- Kaggle 上传：[scripts/upload_kaggle_model.py](./scripts/upload_kaggle_model.py)
 
 ## Ⅱ 🛠️ 模型训练
 

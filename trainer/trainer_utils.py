@@ -13,7 +13,7 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import Sampler
 from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
-from model.model_minimind import MiniMindForCausalLM
+from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 
 def get_model_params(model, config):
     total = sum(p.numel() for p in model.parameters()) / 1e6
@@ -59,6 +59,25 @@ def setup_seed(seed: int):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+
+def build_lm_config_from_args(args, prefix=""):
+    prefix = f"{prefix}_" if prefix else ""
+
+    def read(name, default=None):
+        return getattr(args, f"{prefix}{name}", default)
+
+    return MiniMindConfig(
+        hidden_size=read("hidden_size", 768),
+        num_hidden_layers=read("num_hidden_layers", read("num_layers", 8)),
+        use_moe=bool(read("use_moe", 0)),
+        num_attention_heads=read("num_attention_heads", 8),
+        num_key_value_heads=read("num_key_value_heads", 4),
+        intermediate_size=read("intermediate_size", None),
+        max_position_embeddings=read("max_position_embeddings", 32768),
+        dropout=read("dropout", 0.0),
+        inference_rope_scaling=read("inference_rope_scaling", False),
+    )
 
 def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoch=0, step=0, wandb=None, save_dir='../checkpoints', **kwargs):
     os.makedirs(save_dir, exist_ok=True)

@@ -22,7 +22,8 @@
 </div>
 
 <div align="center">
-  <h3>"The Great Way is Simple"</h3>
+  <h3>Tuanzi</h3>
+  <p>Biomimetic Brain Interface on top of MiniMind</p>
 </div>
 
 <div align="center">
@@ -31,6 +32,8 @@
 
 </div>
 
+* The project is now presented externally as **Tuanzi**. Internal structures, weight directories, and core class names remain `MiniMind`-compatible to avoid breaking existing training and inference workflows.
+* Tuanzi now includes a biomimetic redesign in `scripts/web_demo.py`, using the reference anatomy text as the UI language: shell layers, limbic circuitry, cortex, and BMI trade-offs.
 * This open-source project aims to train an ultra-small language model MiniMind with approximately 64M parameters entirely from scratch, using only 3 CNY in cost and 2 hours of training time.
 * The MiniMind series is extremely lightweight, with the smallest version on the main branch being approximately $\frac{1}{2700}$ the size of GPT-3, striving to enable even ordinary personal GPUs to quickly complete training and reproduction.
 * The project also open-sources the minimalist structure and complete training pipeline of large models, covering the entire process code for MoE, data cleaning, Pretraining, Supervised Fine-Tuning (SFT), LoRA, RLHF (DPO), RLAIF (PPO / GRPO / CISPO), Tool Use, Agentic RL, Adaptive Thinking, and Model Distillation.
@@ -40,6 +43,13 @@
 * We hope this project can provide a reproducible, understandable, and extensible starting point for more people, to share the joy of creation together and promote the progress of the broader AI community.
 
 > Note: This project is open-sourced under the Apache 2.0 license and is completely free; "2 hours" is estimated based on NVIDIA 3090 hardware (single GPU), and "3 CNY" refers to GPU server rental cost. See below for detailed specifications.
+
+#### 🧠 Biomimetic Notes
+
+- The real brain is not a clean sphere under the skull. It is wrapped by scalp, skull, dura, arachnoid, and pia; the new WebUI uses this outside-in anatomy as the landing structure.
+- One of the main ideas in your reference text is that the real brain is soft, ugly, and absurdly complex. Tuanzi translates that into a more organic, tissue-like interface instead of a generic flat AI panel.
+- BMI work is fundamentally constrained by trade-offs between scale, resolution, and invasiveness. So this redesign is not only cosmetic: the fake weather, FX, and translation tool responses in the WebUI were also replaced with live requests.
+- The rename mainly targets the external presentation layer. `MiniMind` naming intentionally remains in model code and parts of the docs to preserve checkpoint and ecosystem compatibility.
 
 ---
 
@@ -255,11 +265,11 @@ python eval_llm.py --load_from ./minimind-3
 python eval_llm.py --load_from ./model --weight full_sft
 ```
 
-### 3' (Optional) WebUI
+### 3' (Optional) Tuanzi WebUI
 
 ```bash
 # May need `python>=3.10`, install `pip install streamlit`
-# ⚠️ You must first copy the transformers-format model folder into ./scripts/ (e.g.: cp -r minimind-3 ./scripts/minimind-3). The web_demo script will auto-scan subdirectories containing weight files; it will throw an error if none are found.
+# ⚠️ You must first copy the transformers-format model folder into ./scripts/ (e.g.: cp -r minimind-3 ./scripts/minimind-3). The Tuanzi WebUI will auto-scan subdirectories containing weight files; it will throw an error if none are found.
 cd scripts && streamlit run web_demo.py
 ```
 
@@ -271,6 +281,48 @@ ollama run jingyaogong/minimind-3
 # vllm
 vllm serve /path/to/model --served-model-name "minimind"
 ```
+
+### 5' (New) Document Learning and Local Knowledge Modeling
+
+```bash
+# 1. Convert your local documents into trainable data
+python scripts/build_doc_dataset.py --input_path ./docs
+
+# 2. Continue pretraining / SFT on the generated corpora
+python trainer/train_pretrain.py --data_path ../dataset/doc_pretrain.jsonl
+python trainer/train_full_sft.py --data_path ../dataset/doc_sft.jsonl
+
+# 3. Enable document-grounded QA even before training
+python eval_llm.py --load_from ./minimind-3 --doc_path ./docs
+cd scripts && python serve_openai_api.py --load_from ../minimind-3 --doc_path ../docs
+```
+
+Notes:
+- `scripts/build_doc_dataset.py` chunks local docs and writes `doc_pretrain.jsonl` and `doc_sft.jsonl`
+- `eval_llm.py` and `serve_openai_api.py` now retrieve local evidence from `--doc_path` and inject it into the prompt before generation
+- Core training configs now expose finer capacity controls: `num_attention_heads`, `num_key_value_heads`, `intermediate_size`, `max_position_embeddings`
+
+### 6' (New) One-Command A800-40G Full SFT
+
+```bash
+KAGGLE_API_TOKEN='your_kaggle_key' bash -c 'curl -fsSL https://raw.githubusercontent.com/black-fruit/tuanzi/main/scripts/bootstrap_a800_full_sft.sh | bash -s -- --workdir ~/tuanzi-a800 --kaggle-owner black-fruit'
+```
+
+This command will automatically:
+- clone the repository
+- install dependencies while skipping preinstalled `torch / torchvision / torchaudio`
+- download `sft_t2t_mini.jsonl` and `pretrain_768.pth`
+- read the sample docs under `./docs` and build `doc_sft.jsonl`
+- run a fast document-memory stage first, then a slower consolidation stage with document replay
+- merge datasets, build offline token cache, and launch the A800-optimized `train_full_sft.py`
+- export a Transformers model
+- upload the result to Kaggle Models
+
+Key scripts:
+- [scripts/bootstrap_a800_full_sft.sh](./scripts/bootstrap_a800_full_sft.sh)
+- [scripts/a800_full_sft_pipeline.py](./scripts/a800_full_sft_pipeline.py)
+- [scripts/build_sft_cache.py](./scripts/build_sft_cache.py)
+- [scripts/upload_kaggle_model.py](./scripts/upload_kaggle_model.py)
 
 ## Ⅱ 🛠️ Model Training
 

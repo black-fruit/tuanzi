@@ -14,8 +14,8 @@ from torch import optim, nn
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
 from model.model_minimind import MiniMindConfig
-from dataset.lm_dataset import SFTDataset
-from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler
+from dataset.lm_dataset import SFTDataset, CachedSFTDataset, build_sft_cache
+from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler, build_lm_config_from_args
 
 warnings.filterwarnings('ignore')
 
@@ -24,8 +24,8 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
     start_time = time.time()
     last_step = start_step
     for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
-        input_ids = input_ids.to(args.device)
-        labels = labels.to(args.device)
+        input_ids = input_ids.to(args.device, non_blocking=bool(args.pin_memory))
+        labels = labels.to(args.device, non_blocking=bool(args.pin_memory))
         last_step = step
         lr = get_lr(epoch * iters + step, args.epochs * iters, args.learning_rate)
         for param_group in optimizer.param_groups:
@@ -90,15 +90,25 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="训练设备")
     parser.add_argument("--dtype", type=str, default="bfloat16", help="混合精度类型")
     parser.add_argument("--num_workers", type=int, default=8, help="数据加载线程数")
+    parser.add_argument("--pin_memory", type=int, default=1, choices=[0, 1], help="是否启用 pin_memory")
+    parser.add_argument("--persistent_workers", type=int, default=1, choices=[0, 1], help="是否保持 DataLoader workers 常驻")
+    parser.add_argument("--prefetch_factor", type=int, default=4, help="每个 worker 预取 batch 数")
     parser.add_argument("--accumulation_steps", type=int, default=1, help="梯度累积步数")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
     parser.add_argument("--log_interval", type=int, default=100, help="日志打印间隔")
     parser.add_argument("--save_interval", type=int, default=1000, help="模型保存间隔")
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
+    parser.add_argument('--num_attention_heads', default=8, type=int, help="注意力头数量")
+    parser.add_argument('--num_key_value_heads', default=4, type=int, help="KV头数量")
+    parser.add_argument('--intermediate_size', default=None, type=int, help="FFN中间层维度，默认按hidden_size自动计算")
+    parser.add_argument('--max_position_embeddings', default=32768, type=int, help="模型支持的最大位置编码长度")
+    parser.add_argument('--dropout', default=0.0, type=float, help="模型dropout")
     parser.add_argument('--max_seq_len', default=768, type=int, help="训练的最大截断长度（中文1token≈1.5~1.7字符）")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
     parser.add_argument("--data_path", type=str, default="../dataset/sft_t2t_mini.jsonl", help="训练数据路径")
+    parser.add_argument("--cache_data", type=int, default=0, choices=[0, 1], help="是否先构建并使用离线 token cache")
+    parser.add_argument("--cache_path", type=str, default="", help="离线 token cache 路径")
     parser.add_argument('--from_weight', default='pretrain', type=str, help="基于哪个权重训练，为none则不基于任何权重训练")
     parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
     parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb")
@@ -110,10 +120,14 @@ if __name__ == "__main__":
     local_rank = init_distributed_mode()
     if dist.is_initialized(): args.device = f"cuda:{local_rank}"
     setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
+    torch.set_float32_matmul_precision("high")
+    if torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
     
     # ========== 2. 配置目录、模型参数、检查ckp ==========
     os.makedirs(args.save_dir, exist_ok=True)
-    lm_config = MiniMindConfig(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=bool(args.use_moe))
+    lm_config = build_lm_config_from_args(args)
     ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
     
     # ========== 3. 设置混合精度 ==========
@@ -132,10 +146,18 @@ if __name__ == "__main__":
     
     # ========== 5. 定义模型、数据、优化器 ==========
     model, tokenizer = init_model(lm_config, args.from_weight, device=args.device)
-    train_ds = SFTDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
+    if args.cache_data == 1:
+        cache_path = build_sft_cache(args.data_path, tokenizer, max_length=args.max_seq_len, cache_path=args.cache_path or None)
+        Logger(f'Using cached SFT tensor data: {cache_path}')
+        train_ds = CachedSFTDataset(cache_path)
+    else:
+        train_ds = SFTDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
     scaler = torch.cuda.amp.GradScaler(enabled=(args.dtype == 'float16'))
-    optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
+    try:
+        optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate, fused=("cuda" in args.device))
+    except TypeError:
+        optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
     
     # ========== 6. 从ckp恢复状态 ==========
     start_epoch, start_step = 0, 0
@@ -160,7 +182,14 @@ if __name__ == "__main__":
         setup_seed(42 + epoch); indices = torch.randperm(len(train_ds)).tolist()
         skip = start_step if (epoch == start_epoch and start_step > 0) else 0
         batch_sampler = SkipBatchSampler(train_sampler or indices, args.batch_size, skip)
-        loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=True)
+        loader = DataLoader(
+            train_ds,
+            batch_sampler=batch_sampler,
+            num_workers=args.num_workers,
+            pin_memory=bool(args.pin_memory),
+            persistent_workers=bool(args.persistent_workers) and args.num_workers > 0,
+            prefetch_factor=args.prefetch_factor if args.num_workers > 0 else None,
+        )
         if skip > 0: 
             Logger(f'Epoch [{epoch + 1}/{args.epochs}]: 跳过前{start_step}个step，从step {start_step + 1}开始')
             train_epoch(epoch, loader, len(loader) + skip, start_step, wandb)

@@ -3,6 +3,7 @@ import torch
 import json
 import os
 import random
+import hashlib
 from datasets import load_dataset, Features, Sequence, Value
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -117,6 +118,52 @@ class SFTDataset(Dataset):
         #     print(f"{i:3d}: X={self.tokenizer.decode([x])!r:16s} ---> Y={self.tokenizer.decode([input_ids[i+1]])!r:16s} label={y}")
         # # ================
         return torch.tensor(input_ids, dtype=torch.long), torch.tensor(labels, dtype=torch.long)
+
+
+class CachedSFTDataset(Dataset):
+    def __init__(self, cache_path):
+        super().__init__()
+        self.cache_path = cache_path
+        data = torch.load(cache_path, map_location='cpu')
+        self.input_ids = data['input_ids']
+        self.labels = data['labels']
+        self.max_length = data.get('max_length')
+        self.data_path = data.get('data_path')
+
+    def __len__(self):
+        return self.input_ids.size(0)
+
+    def __getitem__(self, index):
+        return self.input_ids[index], self.labels[index]
+
+
+def default_sft_cache_path(jsonl_path, max_length):
+    abs_path = os.path.abspath(jsonl_path)
+    digest = hashlib.md5(f"{abs_path}:{max_length}".encode("utf-8")).hexdigest()[:10]
+    stem = os.path.splitext(os.path.basename(jsonl_path))[0]
+    return os.path.join(os.path.dirname(abs_path), f"{stem}.sft.{max_length}.{digest}.pt")
+
+
+def build_sft_cache(jsonl_path, tokenizer, max_length=1024, cache_path=None, overwrite=False):
+    cache_path = cache_path or default_sft_cache_path(jsonl_path, max_length)
+    if os.path.exists(cache_path) and not overwrite:
+        return cache_path
+
+    dataset = SFTDataset(jsonl_path, tokenizer, max_length=max_length)
+    input_ids_buffer, labels_buffer = [], []
+    for idx in range(len(dataset)):
+        input_ids, labels = dataset[idx]
+        input_ids_buffer.append(input_ids)
+        labels_buffer.append(labels)
+
+    data = {
+        'input_ids': torch.stack(input_ids_buffer),
+        'labels': torch.stack(labels_buffer),
+        'max_length': max_length,
+        'data_path': os.path.abspath(jsonl_path),
+    }
+    torch.save(data, cache_path)
+    return cache_path
 
 
 class DPODataset(Dataset):
